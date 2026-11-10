@@ -81,5 +81,10 @@ $env:RECEPTION_TEST_DB_URL = 'jdbc:postgresql://localhost:5432/reception_test'
 Spusť `mvn test` ve stejném terminálu, nebo nastav tuto proměnnou v konfiguraci
 testu `ConcurrentAssignmentTest` v IDEA. U jiné instance nastav také
 `DB_USER` a `DB_PASSWORD`. Test spustí migrace v samostatném schématu,
-odešle dva souběžné požadavky a ověří výsledky 201 a 409 i počet záznamů.
-Po testu odstraní své schéma. Bez testovací URL se jen tento test přeskočí.
+ověří hranice přidělení u noční směny na přelomu měsíců a odmítnutí neplatných změn.
+Při souběžném obsazování stejné směny očekává odpovědi 201 a 409.
+Ve dvou databázových spojeních také zkouší zkrácení směny do 21:00 souběžně
+s přidělením do 22:00. Vyzkouší obě pořadí zápisu a před potvrzením první
+transakce ověří, že druhá v PostgreSQL skutečně čeká na zámek.
+Po dokončení se testovací schéma odstraní. Bez testovací URL se přeskočí celá
+třída `ConcurrentAssignmentTest`.

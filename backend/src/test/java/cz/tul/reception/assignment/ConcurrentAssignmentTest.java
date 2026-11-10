@@ -1,20 +1,29 @@
 package cz.tul.reception.assignment;
 
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import javax.sql.DataSource;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -46,6 +55,7 @@ class ConcurrentAssignmentTest {
     }
 
     @Autowired JdbcClient jdbc;
+    @Autowired DataSource dataSource;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired PasswordEncoder encoder;
@@ -53,6 +63,92 @@ class ConcurrentAssignmentTest {
     @AfterAll
     void dropTestSchema() {
         jdbc.sql("DROP SCHEMA " + SCHEMA + " CASCADE").update();
+    }
+
+    @Test
+    void assignmentsStayWithinTheirShiftAcrossMidnightAndMonthEnd() throws Exception {
+        var script = new ClassPathResource("sql/assignment-bounds.sql");
+        jdbc.sql(script.getContentAsString(StandardCharsets.UTF_8)).update();
+    }
+
+    @ParameterizedTest(name = "Concurrent shift shortening and assignment (insert first = {0})")
+    @ValueSource(booleans = {true, false})
+    void shorteningAndAssigningCannotCommitIncompatibleBounds(boolean insertFirst) throws Exception {
+        jdbc.sql("INSERT INTO block (code) VALUES ('D') ON CONFLICT (code) DO NOTHING").update();
+        long block = jdbc.sql("SELECT id FROM block WHERE code = 'D'").query(Long.class).single();
+        long worker = employee(block, false);
+        long shift = jdbc.sql("""
+                INSERT INTO shift (block_id, starts_at, ends_at)
+                VALUES (?, '2026-11-11 14:00+01', '2026-11-11 22:00+01') RETURNING id
+                """).param(block).query(Long.class).single();
+
+        try (var pool = Executors.newSingleThreadExecutor();
+             var first = dataSource.getConnection();
+             var second = dataSource.getConnection()) {
+            first.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+            second.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+            first.setAutoCommit(false);
+            int secondPid;
+            try (var stmt = second.createStatement(); var rows = stmt.executeQuery("SELECT pg_backend_pid()")) {
+                rows.next();
+                secondPid = rows.getInt(1);
+            }
+            try {
+                changeBounds(first, insertFirst, shift, worker);
+                var result = pool.submit(() -> {
+                    try {
+                        changeBounds(second, !insertFirst, shift, worker);
+                        return "committed";
+                    } catch (SQLException ex) {
+                        return ex.getSQLState();
+                    }
+                });
+                awaitBlockedByFirst(first, secondPid);
+                first.commit();
+                assertThat(result.get(15, TimeUnit.SECONDS)).isEqualTo("23514");
+            } finally {
+                first.rollback();
+            }
+        }
+
+        assertThat(jdbc.sql("SELECT count(*) FROM shift_assignment WHERE shift_id = ?")
+                .param(shift).query(Integer.class).single()).isEqualTo(insertFirst ? 1 : 0);
+        String expectedEnd = insertFirst ? "2026-11-11 22:00+01" : "2026-11-11 21:00+01";
+        assertThat(jdbc.sql("SELECT ends_at = CAST(? AS timestamptz) FROM shift WHERE id = ?")
+                .params(expectedEnd, shift).query(Boolean.class).single()).isTrue();
+    }
+
+    private static void changeBounds(Connection connection, boolean insert, long shift, long worker)
+            throws SQLException {
+        String sql = insert ? """
+                INSERT INTO shift_assignment (shift_id, employee_id, starts_at, ends_at)
+                VALUES (?, ?, '2026-11-11 19:00+01', '2026-11-11 22:00+01')
+                """ : "UPDATE shift SET ends_at = '2026-11-11 21:00+01' WHERE id = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setLong(1, shift);
+            if (insert) {
+                stmt.setLong(2, worker);
+            }
+            stmt.setQueryTimeout(20);
+            assertThat(stmt.executeUpdate()).isEqualTo(1);
+        }
+    }
+
+    private static void awaitBlockedByFirst(Connection first, int secondPid) throws Exception {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        try (var check = first.prepareStatement("SELECT pg_backend_pid() = ANY(pg_blocking_pids(?))")) {
+            check.setInt(1, secondPid);
+            while (System.nanoTime() < deadline) {
+                try (var rows = check.executeQuery()) {
+                    rows.next();
+                    if (rows.getBoolean(1)) {
+                        return;
+                    }
+                }
+                Thread.sleep(20);
+            }
+        }
+        throw new AssertionError("PostgreSQL did not report a lock conflict between the two transactions");
     }
 
     @Test
