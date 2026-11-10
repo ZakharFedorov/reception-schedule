@@ -1,6 +1,7 @@
 # Datový model rozpisu směn
 
-Model odpovídá [migraci V1](../backend/src/main/resources/db/migration/V1__create_schedule_core.sql).
+Diagram zachycuje jádro rozpisu z migrace V1. Migrace V2 přidává příznak
+správce bloku, místní účet zaměstnance a kontroly obsazení směn.
 Směna určuje, který blok potřebuje obsadit a v jakém čase.
 Přidělení směny určuje, kdo pokryje konkrétní časový úsek.
 
@@ -50,4 +51,9 @@ Její domovský blok zůstává A. Z těchto časů lze určit, které části o
 - Přidělení jednoho zaměstnance se nesmějí časově překrývat ani mezi různými bloky.
   Konec jednoho úseku může být začátkem dalšího, jako při předání v 19:00.
 
-Kontrola, že přidělený úsek celý leží uvnitř příslušné směny, v migraci V1 zatím chybí.
+- Od V2 se v jedné směně nesmějí překrývat ani úseky dvou různých zaměstnanců.
+- Přidělení musí celé ležet uvnitř směny. Databáze kontroluje také změnu času
+  již obsazené směny. V2 odmítne existující neplatná data. Chybu lze dohledat
+  porovnáním intervalů v tabulkách `shift_assignment` a `shift`.
+- Každý blok může mít nejvýše jednoho správce. Oprávnění k přidělení se ověřuje
+  podle bloku směny. Domovský blok přiděleného zaměstnance se nemění.
