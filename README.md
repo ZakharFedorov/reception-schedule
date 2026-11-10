@@ -24,6 +24,7 @@ docker compose exec db psql -U reception -d reception -c "\dt"
 
 ## Dokumentace a ukázková data
 
+- [Koncepce aplikace](docs/koncepce.md) popisuje směny, záskoky mezi bloky, pravidla odpočinku a výpočet měsíčních odměn.
 - [Datový model rozpisu směn](docs/datovy-model.md) vysvětluje vztah mezi blokem, zaměstnancem, směnou a přidělenou částí směny.
 - [První migrace](backend/src/main/resources/db/migration/V1__create_schedule_core.sql) vytváří tabulky a jejich omezení.
 - [Ukázková data](dev/demo.sql) ilustrují záskok mezi dvěma bloky. Skript je určený pro jednorázové spuštění nad prázdnou databází po migraci:
