@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: reception
+      POSTGRES_USER: reception
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-reception_local}
+      TZ: Europe/Prague
+    volumes:
+      - reception_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reception -d reception"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/reception
+      DB_PASSWORD: ${DB_PASSWORD:-reception_local}
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  reception_data:
