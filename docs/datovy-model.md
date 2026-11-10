@@ -57,3 +57,15 @@ Její domovský blok zůstává A. Z těchto časů lze určit, které části o
   porovnáním intervalů v tabulkách `shift_assignment` a `shift`.
 - Každý blok může mít nejvýše jednoho správce. Oprávnění k přidělení se ověřuje
   podle bloku směny. Domovský blok přiděleného zaměstnance se nemění.
+
+## Zkrácení směny během přidělování
+
+Směna končí ve 22:00. Jeden požadavek přiděluje úsek 19:00–22:00 a druhý
+současně posouvá konec směny na 21:00. Při vkládání přidělení si databáze
+zamkne řádek směny pro čtení (`FOR SHARE`). Změna času potřebuje na stejném
+řádku zámek pro zápis. V režimu `READ COMMITTED` proto záleží na pořadí:
+
+- Pokud se nejprve uloží přidělení, databáze odmítne zkrátit obsazenou směnu.
+- Pokud se nejprve uloží kratší směna, databáze odmítne přidělení do 22:00.
+
+Obě pořadí ověřuje [integrační test](../backend/src/test/java/cz/tul/reception/assignment/ConcurrentAssignmentTest.java).
